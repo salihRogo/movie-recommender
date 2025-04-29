@@ -25,7 +25,7 @@ This is the backend for the Movie Recommender system, built using FastAPI.
 
 5. **Run the Application**: Use uvicorn to start the FastAPI application.
     ```bash
-    uvicorn app.main:app --host
+    uvicorn app.main:app --reload
     ```
 
 ## Steps to Test the Routes on Postman
