@@ -92,12 +92,12 @@ class RecommenderService:
             with RecommenderService._db_engine.connect() as connection:
                 query = text(f"""
                     SELECT
-                        l.imdb_id,
+                        l."imdbId",
                         COUNT(r.rating) AS num_ratings,
                         AVG(r.rating) AS avg_rating
                     FROM ratings r
                     JOIN links l ON r."movieId" = l."movieId"
-                    GROUP BY l.imdb_id
+                    GROUP BY l."imdbId"
                     HAVING COUNT(r.rating) >= :min_ratings
                     ORDER BY num_ratings DESC, avg_rating DESC
                     LIMIT :top_n
@@ -115,44 +115,72 @@ class RecommenderService:
     async def get_movie_details_by_imdb_id(self, imdb_id: str) -> dict:
         """Fetches movie details from OMDb API using IMDb ID."""
         if not settings.OMDB_API_KEY or settings.OMDB_API_KEY == "YOUR_OMDB_API_KEY_HERE":
+            logger.error("OMDb API key not configured or is placeholder.")
             return {"Error": "OMDb API key not configured."}
 
-        # Ensure the imdb_id has the 'tt' prefix
-        full_imdb_id = imdb_id if imdb_id.startswith("tt") else f"tt{imdb_id}"
+        if not isinstance(imdb_id, str):
+            logger.error(f"Invalid imdb_id type: {type(imdb_id)}, value: {imdb_id}. Must be a string.")
+            return {"Error": "Invalid IMDb ID format (must be string)."}
+        
+        imdb_id_original_for_log = imdb_id # Save original for logging before stripping
+        imdb_id = imdb_id.strip()
 
+        numeric_part = imdb_id[2:] if imdb_id.startswith("tt") else imdb_id
+        # IMDb IDs can be 7 to 9 digits long (e.g. tt1234567, tt123456789)
+        if not numeric_part.isdigit() or not (7 <= len(numeric_part) <= 9):
+             logger.warning(f"Potentially malformed IMDb ID numeric part: '{numeric_part}' (from original: '{imdb_id_original_for_log}'). Proceeding with tt prefixing.")
+
+        full_imdb_id = imdb_id if imdb_id.startswith("tt") else f"tt{imdb_id}"
+        
         params = {
             "apikey": settings.OMDB_API_KEY,
             "i": full_imdb_id
         }
+        
+        query_string = "&".join(f"{k}={v}" for k, v in params.items())
+        request_url = f"{settings.OMDB_API_BASE_URL}?{query_string}"
+        
+        logger.info(f"Attempting OMDb API call to: {settings.OMDB_API_BASE_URL}?i={params['i']}&apikey=REDACTED (using original imdb_id: {imdb_id_original_for_log})")
+
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(settings.OMDB_API_BASE_URL, params=params)
-                response.raise_for_status() # Raises an exception for 4XX/5XX responses
+                response.raise_for_status()
                 data = response.json()
                 if data.get("Response") == "True":
+                    logger.info(f"Successfully fetched details for IMDb ID {full_imdb_id} from OMDb.")
                     return {
-                        "imdbID": data.get("imdbID"),
+                        "imdb_id": full_imdb_id,
                         "Title": data.get("Title"),
                         "Year": data.get("Year"),
+                        "Rated": data.get("Rated"),
+                        "Released": data.get("Released"),
+                        "Runtime": data.get("Runtime"),
                         "Genre": data.get("Genre"),
                         "Director": data.get("Director"),
+                        "Writer": data.get("Writer"),
+                        "Actors": data.get("Actors"),
                         "Plot": data.get("Plot"),
+                        "Language": data.get("Language"),
+                        "Country": data.get("Country"),
+                        "Awards": data.get("Awards"),
                         "Poster": data.get("Poster"),
-                        "imdbRating": data.get("imdbRating")
+                        "imdbRating": data.get("imdbRating"),
+                        "imdbVotes": data.get("imdbVotes"),
+                        "Type": data.get("Type"),
                     }
                 else:
-                    error_message = data.get("Error", "Movie not found or API error.")
-                    print(f"OMDb API returned error for imdb_id {full_imdb_id}: {error_message} (Full response: {data})")
-                    return {"Error": error_message, "imdbID": imdb_id}
+                    logger.error(f"OMDb API returned error for full_imdb_id {full_imdb_id} (original imdb_id: {imdb_id_original_for_log}): {data.get('Error')}. URL: {settings.OMDB_API_BASE_URL}?i={params['i']}&apikey=REDACTED. Full response: {data}")
+                    return {"Error": f"OMDb API Error: {data.get('Error')}", "imdb_id_queried": full_imdb_id, "original_imdb_id": imdb_id_original_for_log}
         except httpx.HTTPStatusError as e:
-            print(f"OMDb API HTTPStatusError for imdb_id {full_imdb_id}: {e.response.status_code} - {e.response.text}")
-            return {"Error": f"OMDb API request failed: {e.response.status_code}", "imdbID": imdb_id}
+            logger.error(f"HTTPStatusError when calling OMDb API for {full_imdb_id} (original: {imdb_id_original_for_log}). Status: {e.response.status_code}. URL: {settings.OMDB_API_BASE_URL}?i={params['i']}&apikey=REDACTED. Response: {e.response.text}")
+            return {"Error": f"HTTP error: {e.response.status_code}", "imdb_id_queried": full_imdb_id, "original_imdb_id": imdb_id_original_for_log}
         except httpx.RequestError as e:
-            print(f"OMDb API RequestError for imdb_id {full_imdb_id}: {e}")
-            return {"Error": f"OMDb API request error: {e}", "imdbID": imdb_id}
+            logger.error(f"RequestError when calling OMDb API for {full_imdb_id} (original: {imdb_id_original_for_log}). URL: {settings.OMDB_API_BASE_URL}?i={params['i']}&apikey=REDACTED. Error: {str(e)}")
+            return {"Error": f"Request error: {str(e)}", "imdb_id_queried": full_imdb_id, "original_imdb_id": imdb_id_original_for_log}
         except Exception as e:
-            print(f"OMDb API unexpected error for imdb_id {full_imdb_id}: {e}")
-            return {"Error": f"An unexpected error occurred: {e}", "imdbID": imdb_id}
+            logger.exception(f"Unexpected error fetching movie details for {full_imdb_id} (original: {imdb_id_original_for_log}) from OMDb. URL: {settings.OMDB_API_BASE_URL}?i={params['i']}&apikey=REDACTED.")
+            return {"Error": "Unexpected error fetching movie details.", "imdb_id_queried": full_imdb_id, "original_imdb_id": imdb_id_original_for_log}
 
     def get_recommendations(self, user_id: int, n: int = 10) -> tuple[list[str], str]:
         if self.trainset is None:
