@@ -138,12 +138,17 @@ class RecommenderService:
                         "imdbRating": data.get("imdbRating")
                     }
                 else:
-                    return {"Error": data.get("Error", "Movie not found or API error."), "imdbID": imdb_id}
+                    error_message = data.get("Error", "Movie not found or API error.")
+                    print(f"OMDb API returned error for imdb_id {imdb_id}: {error_message} (Full response: {data})")
+                    return {"Error": error_message, "imdbID": imdb_id}
         except httpx.HTTPStatusError as e:
+            print(f"OMDb API HTTPStatusError for imdb_id {imdb_id}: {e.response.status_code} - {e.response.text}")
             return {"Error": f"OMDb API request failed: {e.response.status_code}", "imdbID": imdb_id}
         except httpx.RequestError as e:
+            print(f"OMDb API RequestError for imdb_id {imdb_id}: {e}")
             return {"Error": f"OMDb API request error: {e}", "imdbID": imdb_id}
         except Exception as e:
+            print(f"OMDb API unexpected error for imdb_id {imdb_id}: {e}")
             return {"Error": f"An unexpected error occurred: {e}", "imdbID": imdb_id}
 
     def get_recommendations(self, user_id: int, n: int = 10) -> tuple[list[str], str]:
