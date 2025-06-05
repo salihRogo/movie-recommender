@@ -6,7 +6,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, text # Added for DB interaction
 
 import httpx # For making API calls to OMDb
-from app.core.config import settings, BACKEND_APP_DIR
+from ..core.config import settings, BACKEND_APP_DIR
 
 MODEL_FILENAME = "svd_model.joblib"
 MODEL_PATH = BACKEND_APP_DIR.parent / "models" / MODEL_FILENAME

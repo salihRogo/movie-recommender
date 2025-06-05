@@ -2,9 +2,9 @@ from fastapi import FastAPI, HTTPException
 from typing import List, Dict
 import asyncio # Added for asyncio.gather
 
-from app.services.recommender_service import RecommenderService
-from app.schemas import RecommendationResponse
-from app.core.config import settings
+from .services.recommender_service import RecommenderService
+from .schemas import RecommendationResponse
+from .core.config import settings
 
 app = FastAPI(
     title="Movie Recommender API",
