@@ -96,7 +96,7 @@ class RecommenderService:
                         COUNT(r.rating) AS num_ratings,
                         AVG(r.rating) AS avg_rating
                     FROM ratings r
-                    JOIN links l ON r.movie_id = l.movie_id
+                    JOIN links l ON r."movieId" = l."movieId"
                     GROUP BY l.imdb_id
                     HAVING COUNT(r.rating) >= :min_ratings
                     ORDER BY num_ratings DESC, avg_rating DESC
@@ -117,9 +117,12 @@ class RecommenderService:
         if not settings.OMDB_API_KEY or settings.OMDB_API_KEY == "YOUR_OMDB_API_KEY_HERE":
             return {"Error": "OMDb API key not configured."}
 
+        # Ensure the imdb_id has the 'tt' prefix
+        full_imdb_id = imdb_id if imdb_id.startswith("tt") else f"tt{imdb_id}"
+
         params = {
             "apikey": settings.OMDB_API_KEY,
-            "i": imdb_id
+            "i": full_imdb_id
         }
         try:
             async with httpx.AsyncClient() as client:
@@ -139,16 +142,16 @@ class RecommenderService:
                     }
                 else:
                     error_message = data.get("Error", "Movie not found or API error.")
-                    print(f"OMDb API returned error for imdb_id {imdb_id}: {error_message} (Full response: {data})")
+                    print(f"OMDb API returned error for imdb_id {full_imdb_id}: {error_message} (Full response: {data})")
                     return {"Error": error_message, "imdbID": imdb_id}
         except httpx.HTTPStatusError as e:
-            print(f"OMDb API HTTPStatusError for imdb_id {imdb_id}: {e.response.status_code} - {e.response.text}")
+            print(f"OMDb API HTTPStatusError for imdb_id {full_imdb_id}: {e.response.status_code} - {e.response.text}")
             return {"Error": f"OMDb API request failed: {e.response.status_code}", "imdbID": imdb_id}
         except httpx.RequestError as e:
-            print(f"OMDb API RequestError for imdb_id {imdb_id}: {e}")
+            print(f"OMDb API RequestError for imdb_id {full_imdb_id}: {e}")
             return {"Error": f"OMDb API request error: {e}", "imdbID": imdb_id}
         except Exception as e:
-            print(f"OMDb API unexpected error for imdb_id {imdb_id}: {e}")
+            print(f"OMDb API unexpected error for imdb_id {full_imdb_id}: {e}")
             return {"Error": f"An unexpected error occurred: {e}", "imdbID": imdb_id}
 
     def get_recommendations(self, user_id: int, n: int = 10) -> tuple[list[str], str]:
