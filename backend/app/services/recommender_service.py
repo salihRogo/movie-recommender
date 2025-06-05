@@ -1,12 +1,15 @@
 import pandas as pd
 from surprise import Dataset, Reader, SVD
 from collections import defaultdict
+import logging
 import joblib
 from pathlib import Path
 from sqlalchemy import create_engine, text # Added for DB interaction
 
 import httpx # For making API calls to OMDb
 from ..core.config import settings, BACKEND_APP_DIR
+
+logger = logging.getLogger(__name__)
 
 MODEL_FILENAME = "svd_model.joblib"
 MODEL_PATH = BACKEND_APP_DIR.parent / "models" / MODEL_FILENAME
