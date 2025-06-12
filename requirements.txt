@@ -12,7 +12,7 @@ idna==3.10
 joblib==1.5.1
 numpy==1.26.4
 pandas==2.2.3
-psycopg2-binary==2.9.10
+PyMySQL==1.1.1
 pydantic==2.11.5
 pydantic-settings==2.9.1
 pydantic-core==2.33.2
