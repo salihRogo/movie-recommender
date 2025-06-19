@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "heroku-postbuild": "mkdir -p backend/models && curl -L -o backend/models/svd_model_components.joblib \"https://www.dropbox.com/scl/fi/ngjpdodgcwg9mxeqs5n3b/svd_model_components.joblib?rlkey=xrtikdcv3yddn6pfipg5ywz0n&st=gkl5vfrx&dl=1\" && cd frontend && npm install && npm run build && cd ../backend && pip install -r requirements.txt"
+    "heroku-postbuild": "mkdir -p backend/models && curl -L -o backend/models/svd_model_components.joblib \"https://www.dropbox.com/scl/fi/ngjpdodgcwg9mxeqs5n3b/svd_model_components.joblib?rlkey=xrtikdcv3yddn6pfipg5ywz0n&st=gkl5vfrx&dl=1\" && cd frontend && npm install && npm run build"
   },
   "engines": {
     "node": "18.x"
