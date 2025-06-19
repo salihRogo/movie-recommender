@@ -29,3 +29,6 @@ Thumbs.db
 
 # Environment variables
 .env
+
+# Model files / Large assets
+backend/models/svd_model_components.joblib
