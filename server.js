@@ -36,30 +36,32 @@ app.use(
 // Serve static assets from Remix's build folder (inside frontend directory)
 app.use(express.static(path.join(__dirname, 'frontend', 'public'), { maxAge: '1h' }));
 
-// Remix request handler for all other requests
-// Ensure the path to the server build is correct relative to the project root
-const remixBuildPath = path.join(__dirname, 'frontend', 'build', 'server');
-app.all(
-  '*',
-  process.env.NODE_ENV === 'development'
-    ? (req, res, next) => {
-        // In development, rebuild on every request
-        // This requires your frontend/package.json to have a dev script that rebuilds
-        // For simplicity in deployment, we assume a pre-built app here.
-        // If you need live reload in dev with this setup, it's more complex.
-        return createRequestHandler({
-          build: require(remixBuildPath),
-          mode: process.env.NODE_ENV,
-        })(req, res, next);
-      }
-    : createRequestHandler({
-        build: require(remixBuildPath),
-        mode: process.env.NODE_ENV,
-      })
-);
+// Remix request handler using dynamic import for ESM compatibility
+async function startServer() {
+  // We need to use a file URL for dynamic import()
+  const remixBuildPath = path.resolve(__dirname, 'frontend', 'build', 'server', 'index.js');
+  const remixBuildURL = new URL(remixBuildPath, 'file://');
 
-app.listen(port, () => {
-  console.log(`✅ Frontend server listening on port ${port}`);
-  console.log(`✅ Proxying API requests from /api to http://localhost:${backendInternalPort}`);
-  console.log(`Remix server build path: ${remixBuildPath}`);
+  console.log(`Loading Remix server build from: ${remixBuildURL.href}`);
+
+  // Dynamically import the ESM Remix server build
+  const build = await import(remixBuildURL.href);
+
+  app.all(
+    '*',
+    createRequestHandler({
+      build: build.default, // The build is the default export
+      mode: process.env.NODE_ENV,
+    })
+  );
+
+  app.listen(port, () => {
+    console.log(`✅ Frontend server listening on port ${port}`);
+    console.log(`✅ Proxying API requests from /api to http://localhost:${backendInternalPort}`);
+  });
+}
+
+startServer().catch((error) => {
+  console.error('❌ Failed to start server:', error);
+  process.exit(1);
 });
