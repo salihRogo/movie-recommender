@@ -18,17 +18,13 @@ class Settings(BaseSettings):
     ON_HEROKU: bool = os.getenv("ON_HEROKU", "False").lower() == "true"
     # --- General Settings ---
 
-    # Database Configuration (PostgreSQL)
-    # Example: postgresql://user:password@host:port/database
+    # Database Configuration (MySQL)
+    # Example: mysql+pymysql://user:password@host:port/database
     DATABASE_URL: str = os.getenv("DATABASE_URL")
 
     # OMDb API Configuration (http://www.omdbapi.com/)
     OMDB_API_BASE_URL: str = os.getenv("OMDB_API_BASE_URL")
     OMDB_API_KEY: str = os.getenv("OMDB_API_KEY")
-
-    # Recommender Service settings (can be adjusted via .env)
-    API_RECOMMENDER_DATA_SAMPLE_N: int = 200000 # This is now effectively unused by RecommenderService __init__
-    API_RECOMMENDER_FORCE_RETRAIN: bool = False # This is now effectively unused by RecommenderService __init__
 
     # Pydantic settings configuration
     # env_file should point to backend/.env
