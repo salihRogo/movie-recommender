@@ -33,14 +33,8 @@ app.use(
   })
 );
 
-// Serve build assets with long-lived caching
-app.use(express.static(path.join(__dirname, 'frontend', 'public', 'build'), {
-  immutable: true,
-  maxAge: '1y'
-}));
-
-// Serve other public files with a shorter cache
-app.use(express.static(path.join(__dirname, 'frontend', 'public'), { maxAge: '1h' }));
+// Serve all static assets from the Remix build directory
+app.use(express.static(path.join(__dirname, 'frontend', 'build', 'client'), { maxAge: '1h' }));
 
 // Remix request handler using dynamic import for ESM compatibility
 async function startServer() {
