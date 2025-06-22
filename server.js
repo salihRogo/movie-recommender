@@ -5,7 +5,7 @@ const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3000;
-const backendInternalPort = process.env.BACKEND_INTERNAL_PORT || 8001;
+const backendInternalPort = process.env.BACKEND_INTERNAL_PORT || 8000;
 
 // Proxy API requests to the Python backend
 // All requests to /api/* will be forwarded to your Python backend

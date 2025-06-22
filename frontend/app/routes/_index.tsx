@@ -57,7 +57,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     try {
-      const backendUrl = `/api/movies/search?title=${encodeURIComponent(query)}`;
+      const backendUrl = `http://localhost:8000/movies/search?title=${encodeURIComponent(query)}`;
       const response = await fetch(backendUrl);
       if (!response.ok) {
         return json<ActionData>({ error: "Failed to search for movies." }, { status: 500 });
@@ -97,7 +97,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     try {
-      const backendUrl = `/api/recommendations/by_profile`;
+      const backendUrl = `http://localhost:8000/recommendations/by_profile`;
       const response = await fetch(backendUrl, {
         method: "POST",
         headers: {
