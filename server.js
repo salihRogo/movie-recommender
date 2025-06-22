@@ -50,7 +50,7 @@ async function startServer() {
   app.all(
     '*',
     createRequestHandler({
-      build: build.default, // The build is the default export
+      build: build,
       mode: process.env.NODE_ENV,
     })
   );
