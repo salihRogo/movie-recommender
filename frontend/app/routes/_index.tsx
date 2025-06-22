@@ -1,9 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useActionData, Form } from "@remix-run/react";
-// eslint-disable-next-line import/no-unresolved
-import SearchBar from "~/components/SearchBar";
 
 // --- Types --- //
 interface MovieSearchResult {
@@ -65,15 +63,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const rawData = await response.json();
       console.log('Backend search response (raw):', rawData); // Log the raw response
 
-      // The backend (FastAPI with Pydantic) should return data in the shape: { results: MovieSearchResult[] }
-      // The MovieSearchResult model in backend/app/schemas.py uses aliases for imdbID, Title, Year.
-      // So, rawData.results should already be an array of objects like { imdb_id: "...", title: "...", year: "..." }
-      
       let processedSearchResults: MovieSearchResult[] = [];
       if (rawData.results && Array.isArray(rawData.results)) {
         processedSearchResults = rawData.results.map((movie: BackendMovieData) => ({
-          // Ensure movie.imdbID, movie.Title, movie.Year are used from rawData
-          // and mapped to the snake_case fields of MovieSearchResult
           imdb_id: movie.imdbID!,
           title: movie.Title!,
           year: movie.Year!
@@ -113,124 +105,51 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const rawData = await response.json();
       console.log('Backend recommendation response:', rawData);
       
-      // Parse recommendations from response
       let recommendations: RecommendedMovie[] = [];
-      let message = "Here are your recommended movies:";
-      
       if (rawData.recommendations && Array.isArray(rawData.recommendations)) {
-        // Standard format - backend returns array of objects in recommendations property
         recommendations = rawData.recommendations.map((movie: BackendMovieData) => ({
-
-          imdb_id: movie.imdbID || movie.imdb_id,
-          title: movie.Title || movie.title,
-          year: movie.Year || movie.year,
-          poster_url: movie.Poster || movie.poster_url,
-          plot: movie.Plot || movie.plot,
-          genres: movie.Genre || movie.genres
+          imdb_id: movie.imdb_id || movie.imdbID!,
+          title: movie.title || movie.Title!,
+          year: movie.year || movie.Year!,
+          poster_url: movie.poster_url || movie.Poster,
+          genres: movie.genres || movie.Genre,
+          plot: movie.plot || movie.Plot
         }));
-        
-        if (rawData.message) {
-          message = rawData.message;
-        }
-        
-        console.log('Processed recommendations:', recommendations);
-      } else if (Array.isArray(rawData)) {
-        // Try to extract movies from complex format
-        try {
-          // Extract the message if present
-          const messageIndex = rawData.indexOf('message');
-          if (messageIndex !== -1 && messageIndex + 1 < rawData.length) {
-            const potentialMessage = rawData[messageIndex + 1];
-            if (typeof potentialMessage === 'string') {
-              message = potentialMessage;
-            }
-          }
-          
-          // Parse the movie data
-          const extractedMovies: RecommendedMovie[] = [];
-          
-          // Look for Title, imdbID, Year, Poster entries
-          for (let i = 0; i < rawData.length; i++) {
-            const item = rawData[i];
-            if (item === 'Title' && i + 1 < rawData.length) {
-              const title = rawData[i + 1];
-              
-              // Find the corresponding imdbID, Year, Poster for this title
-              let imdbId = '';
-              let year = '';
-              let posterUrl = '';
-              let plot = '';
-              let genres = '';
-              
-              const imdbIdIndex = rawData.indexOf('imdbID', i);
-              if (imdbIdIndex !== -1 && imdbIdIndex + 1 < rawData.length) {
-                imdbId = rawData[imdbIdIndex + 1];
-              }
-              
-              const yearIndex = rawData.indexOf('Year', i);
-              if (yearIndex !== -1 && yearIndex + 1 < rawData.length) {
-                year = rawData[yearIndex + 1];
-              }
-              
-              const posterIndex = rawData.indexOf('Poster', i);
-              if (posterIndex !== -1 && posterIndex + 1 < rawData.length) {
-                posterUrl = rawData[posterIndex + 1];
-              }
-              
-              const plotIndex = rawData.indexOf('Plot', i);
-              if (plotIndex !== -1 && plotIndex + 1 < rawData.length) {
-                plot = rawData[plotIndex + 1];
-              }
-              
-              const genreIndex = rawData.indexOf('Genre', i);
-              if (genreIndex !== -1 && genreIndex + 1 < rawData.length) {
-                genres = rawData[genreIndex + 1];
-              }
-              
-              // If we found a title and imdbID, add to results
-              if (typeof title === 'string' && typeof imdbId === 'string' && imdbId) {
-                extractedMovies.push({
-                  imdb_id: imdbId,
-                  title,
-                  year,
-                  poster_url: posterUrl,
-                  plot,
-                  genres
-                });
-                
-                // Skip ahead to avoid re-processing the same movie
-                i = Math.max(i, imdbIdIndex, yearIndex, posterIndex, plotIndex, genreIndex);
-              }
-            }
-          }
-          
-          if (extractedMovies.length > 0) {
-            recommendations = extractedMovies;
-            console.log('Extracted recommendations:', recommendations);
-          }
-        } catch (parseError) {
-          console.error('Error parsing recommendation data:', parseError);
-        }
       }
-      
+
       return json<ActionData>({ 
-        message, 
-        recommendations 
+        recommendations,
+        message: `Here are ${recommendations.length} recommendations based on your liked movies:`
       });
+
     } catch (error) {
       console.error("Recommendation action error:", error);
-      return json<ActionData>({ error: "Could not get recommendations." }, { status: 500 });
+      return json<ActionData>({ error: "Could not connect to the backend for recommendations." }, { status: 500 });
     }
   }
 
-  return json<ActionData>({ error: "Invalid action." }, { status: 400 });
+  return json<ActionData>({ error: "Invalid intent." }, { status: 400 });
 };
 
 
 // --- Frontend Component --- //
 export default function Index() {
-  const actionData = useActionData<typeof action>();
+  const actionData = useActionData<ActionData>();
   const [selectedMovies, setSelectedMovies] = useState<MovieSearchResult[]>([]);
+  const [searchResults, setSearchResults] = useState<MovieSearchResult[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Effect to update local search results when actionData changes from the server
+  useEffect(() => {
+    if (actionData?.searchResults) {
+      setSearchResults(actionData.searchResults);
+    }
+    // Clear search results on navigation or when the component unmounts without new results
+    if (actionData?.recommendations) {
+        setSearchResults([]);
+        setSearchQuery("");
+    }
+  }, [actionData]);
 
   const addMovie = (movie: MovieSearchResult) => {
     if (!selectedMovies.some(m => m.imdb_id === movie.imdb_id)) {
@@ -247,19 +166,42 @@ export default function Index() {
       <div className="w-full text-center">
         <h1 className="text-3xl md:text-4xl font-bold text-gray-800">Movie Recommender</h1>
         <p className="text-gray-600 mt-2">Find movies you like to get personalized recommendations.</p>
+        <Form method="post" className="flex gap-2 my-6 max-w-lg mx-auto">
+          <input type="hidden" name="intent" value="search" />
+          <input 
+            type="text" 
+            name="query" 
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search for a movie..." 
+            className="flex-grow p-2 border rounded-lg"
+          />
+          <button 
+            type="submit" 
+            className="bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700"
+          >
+            Search
+          </button>
+        </Form>
       </div>
-      
-      <SearchBar />
 
-      {actionData?.error && <p className="text-red-500 mt-4">{actionData.error}</p>}
-      {actionData?.message && <p className="text-blue-500 mt-4">{actionData.message}</p>}
+      {actionData?.error && <p className="text-red-500 my-4">{actionData.error}</p>}
 
-      {/* --- Main Content: Selected Movies and Search Results --- */}
       <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-8">
         
         {/* --- Left Column: Selected Movies --- */}
         <div className="md:col-span-1">
-          <h2 className="text-xl font-semibold mb-4">Your Liked Movies ({selectedMovies.length})</h2>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold">Your Liked Movies ({selectedMovies.length})</h2>
+            {selectedMovies.length > 0 && (
+              <button 
+                onClick={() => setSelectedMovies([])} 
+                className="text-sm text-blue-600 hover:underline"
+              >
+                Clear All
+              </button>
+            )}
+          </div>
           {selectedMovies.length > 0 ? (
             <Form method="post" className="flex flex-col gap-4">
               <input type="hidden" name="intent" value="recommend" />
@@ -281,16 +223,26 @@ export default function Index() {
 
         {/* --- Right Column: Search Results --- */}
         <div className="md:col-span-2">
-          <h2 className="text-xl font-semibold mb-4">Search Results</h2>
-          
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold">Search Results</h2>
+            {searchResults.length > 0 && (
+              <button 
+                onClick={() => { setSearchResults([]); setSearchQuery(""); }} 
+                className="text-sm text-blue-600 hover:underline"
+              >
+                Clear Results
+              </button>
+            )}
+          </div>
           
           <div className="flex flex-col gap-3">
-            {actionData?.searchResults?.map(movie => (
+            {searchResults.map(movie => (
               <div key={movie.imdb_id} className="bg-white p-3 rounded-lg shadow flex justify-between items-center">
                 <p className="text-blue-700 font-medium">{movie.title} ({movie.year})</p>
                 <button onClick={() => addMovie(movie)} className="bg-green-500 text-white py-1 px-3 rounded-full hover:bg-green-600">Add</button>
               </div>
             ))}
+            {searchResults.length === 0 && actionData?.searchResults === undefined && <p className="text-gray-500">Search for movies to see results.</p>}
             {actionData?.searchResults?.length === 0 && <p className="text-gray-500">No movies found.</p>}
           </div>
         </div>
