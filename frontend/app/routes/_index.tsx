@@ -1,300 +1,269 @@
-import { useState, useEffect } from "react";
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useActionData, Form } from "@remix-run/react";
+import { json, type ActionFunctionArgs, type MetaFunction } from "@remix-run/node";
+import { Form, useActionData, useNavigation } from "@remix-run/react";
+import { useState, useMemo } from "react";
 
-// --- Types --- //
-interface MovieSearchResult {
-  imdb_id: string;
-  title: string;
-  year: string;
+import type { MovieSearchResult, RecommendedMovie, BackendMovieData } from '~/types';
+// eslint-disable-next-line import/no-unresolved
+import SelectedMovies from '~/components/SelectedMovies';
+// eslint-disable-next-line import/no-unresolved
+import SearchResults from '~/components/SearchResults';
+// eslint-disable-next-line import/no-unresolved
+import RecommendationCard from '~/components/RecommendationCard';
+
+// --- Remix Loader & Action --- //
+
+export const meta: MetaFunction = () => {
+  return [
+    { title: "Movie Recommender" },
+    { name: "description", content: "Get movie recommendations based on your favorites!" },
+  ];
+};
+
+async function normalizeAndFilter(data: BackendMovieData[], query: string): Promise<MovieSearchResult[]> {
+  if (!Array.isArray(data)) {
+    console.error("Expected an array from backend, but got:", data);
+    return [];
+  }
+
+  const lowerCaseQuery = query.toLowerCase();
+
+  const mappedAndTagged = data.map(movie => ({
+    imdb_id: movie.imdbID || movie.imdb_id || '',
+    title: movie.Title || movie.title || 'Unknown Title',
+    year: movie.Year || movie.year || 'Unknown Year',
+    actors: movie.Actors || movie.actors || 'N/A',
+    isExactMatch: (movie.Title || movie.title || '').toLowerCase() === lowerCaseQuery,
+    imdbVotes: movie.imdbVotes || '0',
+  })).filter(movie => movie.imdb_id);
+
+  // Return the mapped data without sorting; sorting will be handled on the client.
+  return mappedAndTagged;
 }
 
-interface RecommendedMovie {
-  imdb_id: string;
-  title: string;
-  year: string;
-  poster_url?: string;
-  genres?: string;
-  plot?: string;
+async function normalizeRecommendations(data: BackendMovieData[]): Promise<RecommendedMovie[]> {
+  if (!Array.isArray(data)) {
+    console.error("Expected an array for recommendations, but got:", data);
+    return [];
+  }
+  return data.map(movie => ({
+    imdb_id: movie.imdb_id || movie.imdbID || '',
+    title: movie.title || movie.Title || 'Unknown Title',
+    year: movie.year || movie.Year || 'Unknown Year',
+    poster_url: movie.poster_url || movie.Poster,
+    genres: movie.genres || movie.Genre,
+    plot: movie.plot || movie.Plot,
+    actors: movie.Actors || movie.actors,
+    imdbRating: movie.imdbRating,
+  })).filter(movie => movie.imdb_id);
 }
 
-// Interface for the backend movie data format which may use different casing
-interface BackendMovieData {
-  imdbID?: string;
-  imdb_id?: string;
-  Title?: string;
-  title?: string;
-  Year?: string;
-  year?: string;
-  Poster?: string;
-  poster_url?: string;
-  Genre?: string;
-  genres?: string;
-  Plot?: string;
-  plot?: string;
-}
-
-interface ActionData {
-  searchResults?: MovieSearchResult[];
-  recommendations?: RecommendedMovie[];
-  error?: string;
-  message?: string;
-}
-
-// --- Server-Side Action --- //
 export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
+  const API_URL = process.env.API_URL || 'http://127.0.0.1:8000';
 
-  // Differentiate between searching for movies and getting recommendations
-  if (intent === 'search') {
-    const query = formData.get("query");
-    if (!query || typeof query !== 'string') {
-      return json<ActionData>({ error: "Invalid search query." }, { status: 400 });
+  if (intent === "search") {
+    const query = formData.get("search_query") as string;
+    if (!query) {
+      return json({ searchResults: [], error: "Search query cannot be empty." }, { status: 400 });
     }
-
     try {
-      const backendUrl = `http://localhost:8000/movies/search?title=${encodeURIComponent(query)}`;
-      const response = await fetch(backendUrl);
+      const response = await fetch(`${API_URL}/search?movie_title=${encodeURIComponent(query)}`);
       if (!response.ok) {
-        return json<ActionData>({ error: "Failed to search for movies." }, { status: 500 });
+        const errorBody = await response.text();
+        console.error(`API Error ${response.status}:`, errorBody);
+        return json({ searchResults: [], error: `Failed to fetch from API: ${response.statusText}` }, { status: response.status });
       }
-      const rawData = await response.json();
-      console.log('Backend search response (raw):', rawData); // Log the raw response
-
-      let processedSearchResults: MovieSearchResult[] = [];
-      if (rawData.results && Array.isArray(rawData.results)) {
-        processedSearchResults = rawData.results.map((movie: BackendMovieData) => ({
-          imdb_id: movie.imdbID!,
-          title: movie.Title!,
-          year: movie.Year!
-        }));
-      } else {
-        console.warn('Backend response did not contain a `results` array or results was not an array. Raw data:', rawData);
-      }
-
-      console.log('Processed search results to be returned by action:', processedSearchResults);
-      return json<ActionData>({ searchResults: processedSearchResults });
+      const data: BackendMovieData[] = await response.json();
+      const searchResults = await normalizeAndFilter(data, query);
+      return json({ searchResults });
     } catch (error) {
-      console.error("Search action error:", error);
-      return json<ActionData>({ error: "Could not connect to the backend." }, { status: 500 });
+      console.error("Network or parsing error:", error);
+      return json({ searchResults: [], error: "An error occurred while searching." }, { status: 500 });
     }
   }
 
-  if (intent === 'recommend') {
-    const likedMovies = formData.getAll("likedMovies");
-    if (!likedMovies || likedMovies.length === 0) {
-      return json<ActionData>({ error: "No movies selected for recommendations." }, { status: 400 });
+  if (intent === "clear_search") {
+    return json({ searchResults: [], cleared: true });
+  }
+
+  if (intent === "recommend") {
+    const selectedMoviesJSON = formData.get("selected_movies") as string;
+    if (!selectedMoviesJSON) {
+        return json({ recommendations: [], message: "Please select at least one movie." }, { status: 400 });
     }
 
     try {
-      const backendUrl = `http://localhost:8000/recommendations/by_profile`;
-      const response = await fetch(backendUrl, {
-        method: "POST",
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ imdb_ids: likedMovies })
-      });
+      const likedMovies: string[] = JSON.parse(selectedMoviesJSON);
+      if (!Array.isArray(likedMovies) || likedMovies.length === 0) {
+        return json({ recommendations: [], message: "Please select at least one movie." }, { status: 400 });
+      }
 
+      const response = await fetch(`${API_URL}/recommendations/by_profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imdb_ids: likedMovies }),
+      });
       if (!response.ok) {
-        return json<ActionData>({ error: "Failed to get recommendations." }, { status: 500 });
+        const errorBody = await response.text();
+        console.error(`API Error ${response.status}:`, errorBody);
+        return json({ recommendations: [], error: `Failed to get recommendations: ${response.statusText}` }, { status: response.status });
       }
-
-      const rawData = await response.json();
-      console.log('Backend recommendation response:', rawData);
-      
-      let recommendations: RecommendedMovie[] = [];
-      if (rawData.recommendations && Array.isArray(rawData.recommendations)) {
-        recommendations = rawData.recommendations.map((movie: BackendMovieData) => ({
-          imdb_id: movie.imdb_id || movie.imdbID!,
-          title: movie.title || movie.Title!,
-          year: movie.year || movie.Year!,
-          poster_url: movie.poster_url || movie.Poster,
-          genres: movie.genres || movie.Genre,
-          plot: movie.plot || movie.Plot
-        }));
-      }
-
-      return json<ActionData>({ 
-        recommendations,
-        message: `Here are ${recommendations.length} recommendations based on your liked movies:`
+      const responseData = await response.json();
+      const recommendations = await normalizeRecommendations(responseData.recommendations);
+      return json({ 
+        recommendations
       });
-
     } catch (error) {
-      console.error("Recommendation action error:", error);
-      return json<ActionData>({ error: "Could not connect to the backend for recommendations." }, { status: 500 });
+      console.error("Network or parsing error during recommendation:", error);
+      return json({ recommendations: [], error: "An error occurred while getting recommendations." }, { status: 500 });
     }
   }
 
-  return json<ActionData>({ error: "Invalid intent." }, { status: 400 });
+  return json({ error: "Invalid intent" }, { status: 400 });
 };
 
+// --- React Component --- //
 
-// --- Frontend Component --- //
 export default function Index() {
-  const actionData = useActionData<ActionData>();
-  const [selectedMovies, setSelectedMovies] = useState<MovieSearchResult[]>([]);
-  const [searchResults, setSearchResults] = useState<MovieSearchResult[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
+  const actionData = useActionData<typeof action>();
+  const navigation = useNavigation();
 
-  // Effect to update local search results when actionData changes from the server
-  useEffect(() => {
-    if (actionData?.searchResults) {
-      setSearchResults(actionData.searchResults);
-    }
-    // Clear search results on navigation or when the component unmounts without new results
-    if (actionData?.recommendations) {
-        setSearchResults([]);
-        setSearchQuery("");
-    }
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedMovies, setSelectedMovies] = useState<MovieSearchResult[]>([]);
+  const [sortOrder, setSortOrder] = useState<'year' | 'popularity'>('popularity');
+
+  const isSearching = navigation.state === 'submitting' && navigation.formData?.get('intent') === 'search';
+
+  const searchResults = useMemo(() => 
+    (actionData && 'searchResults' in actionData && Array.isArray(actionData.searchResults)) 
+      ? actionData.searchResults 
+      : [],
+    [actionData]
+  );
+  
+  const recommendations = useMemo(() => 
+    (actionData && 'recommendations' in actionData && Array.isArray(actionData.recommendations)) 
+      ? actionData.recommendations 
+      : [],
+    [actionData]
+  );
+
+  const hasSearched = useMemo(() => {
+    if (!actionData) return false;
+    // Don't show 'No results' after explicitly clearing.
+    if ('cleared' in actionData && actionData.cleared) return false;
+    return 'searchResults' in actionData || 'error' in actionData;
   }, [actionData]);
+
+
+
+  const sortedSearchResults = useMemo(() => {
+    return [...searchResults].sort((a, b) => {
+      // Prioritize exact matches
+      if (a.isExactMatch !== b.isExactMatch) {
+        return a.isExactMatch ? -1 : 1;
+      }
+
+      // Fallback to user-selected sort order
+      if (sortOrder === 'year') {
+        return (b.year || '0').localeCompare(a.year || '0');
+      } 
+      
+      // Popularity sort
+      const votesA = parseInt((a.imdbVotes || '0').replace(/,/g, ''), 10);
+      const votesB = parseInt((b.imdbVotes || '0').replace(/,/g, ''), 10);
+      return votesB - votesA;
+    });
+  }, [searchResults, sortOrder]);
 
   const addMovie = (movie: MovieSearchResult) => {
     if (!selectedMovies.some(m => m.imdb_id === movie.imdb_id)) {
-      setSelectedMovies([...selectedMovies, movie]);
+      setSelectedMovies(prev => [...prev, movie]);
     }
   };
 
   const removeMovie = (imdb_id: string) => {
-    setSelectedMovies(selectedMovies.filter(m => m.imdb_id !== imdb_id));
+    setSelectedMovies(prev => prev.filter(m => m.imdb_id !== imdb_id));
+  };
+
+  const clearSelectedMovies = () => {
+    setSelectedMovies([]);
   };
 
   return (
-    <main className="container mx-auto p-4 md:p-8 flex flex-col items-center gap-8">
-      <div className="w-full text-center">
-        <h1 className="text-3xl md:text-4xl font-bold text-gray-800">Movie Recommender</h1>
-        <p className="text-gray-600 mt-2">Find movies you like to get personalized recommendations.</p>
-        <Form method="post" className="flex gap-2 my-6 max-w-lg mx-auto">
-          <input type="hidden" name="intent" value="search" />
-          <input 
-            type="text" 
-            name="query" 
+    <div className="min-h-screen bg-slate-100 font-sans text-slate-800 p-4 sm:p-6 lg:p-8">
+      <header className="text-center mb-12">
+        <h1 className="text-5xl font-extrabold text-slate-900 tracking-tight">Movie Recommender</h1>
+        <p className="text-lg text-slate-500 mt-3">Discover your next favorite film.</p>
+      </header>
+
+      {/* --- Search Form --- */}
+      <Form method="post" className="max-w-xl mx-auto mb-12">
+        <input type="hidden" name="intent" value="search" />
+        <div className="flex items-center bg-white rounded-full shadow-lg p-2">
+          <input
+            type="text"
+            name="search_query"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search for a movie..." 
-            className="flex-grow p-2 border rounded-lg"
+            placeholder="Search for a movie to add to your profile..."
+            className="w-full bg-transparent p-3 text-slate-700 placeholder-slate-400 focus:outline-none"
           />
           <button 
-            type="submit" 
-            className="bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700"
+            type="submit"
+            disabled={isSearching || !searchQuery.trim()}
+            className="bg-sky-600 text-white font-bold p-3 rounded-full hover:bg-sky-700 transition-colors disabled:bg-sky-300 disabled:cursor-not-allowed flex items-center justify-center"
+            aria-label="Search"
           >
-            Search
+            {isSearching ? (
+              <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            )}
           </button>
-        </Form>
-      </div>
-
-      {actionData?.error && <p className="text-red-500 my-4">{actionData.error}</p>}
-
-      <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-8">
-        
-        {/* --- Left Column: Selected Movies --- */}
-        <div className="md:col-span-1">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold">Your Liked Movies ({selectedMovies.length})</h2>
-            {selectedMovies.length > 0 && (
-              <button 
-                onClick={() => setSelectedMovies([])} 
-                className="text-sm text-blue-600 hover:underline"
-              >
-                Clear All
-              </button>
-            )}
-          </div>
-          {selectedMovies.length > 0 ? (
-            <Form method="post" className="flex flex-col gap-4">
-              <input type="hidden" name="intent" value="recommend" />
-              {selectedMovies.map(movie => (
-                <div key={movie.imdb_id} className="bg-white p-3 rounded-lg shadow flex justify-between items-center">
-                  <input type="hidden" name="likedMovies" value={movie.imdb_id} />
-                  <p className="text-blue-700 font-medium">{movie.title} ({movie.year})</p>
-                  <button type="button" onClick={() => removeMovie(movie.imdb_id)} className="text-red-500 hover:text-red-700 font-bold">✕</button>
-                </div>
-              ))}
-              <button type="submit" className="mt-4 w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:bg-gray-400">
-                Get Recommendations
-              </button>
-            </Form>
-          ) : (
-            <p className="text-gray-500">Search for movies to add them to your list.</p>
-          )}
         </div>
+        {actionData && 'error' in actionData && actionData.error && <p className="text-red-500 text-sm mt-3 text-center font-medium">{actionData.error}</p>}
+      </Form>
 
-        {/* --- Right Column: Search Results --- */}
-        <div className="md:col-span-2">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold">Search Results</h2>
-            {searchResults.length > 0 && (
-              <button 
-                onClick={() => { setSearchResults([]); setSearchQuery(""); }} 
-                className="text-sm text-blue-600 hover:underline"
-              >
-                Clear Results
-              </button>
-            )}
-          </div>
-          
-          <div className="flex flex-col gap-3">
-            {searchResults.map(movie => (
-              <div key={movie.imdb_id} className="bg-white p-3 rounded-lg shadow flex justify-between items-center">
-                <p className="text-blue-700 font-medium">{movie.title} ({movie.year})</p>
-                <button onClick={() => addMovie(movie)} className="bg-green-500 text-white py-1 px-3 rounded-full hover:bg-green-600">Add</button>
-              </div>
-            ))}
-            {searchResults.length === 0 && actionData?.searchResults === undefined && <p className="text-gray-500">Search for movies to see results.</p>}
-            {actionData?.searchResults?.length === 0 && <p className="text-gray-500">No movies found.</p>}
-          </div>
+      {/* --- Main Content Grid --- */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
+        <div className="lg:col-span-1">
+          <SelectedMovies 
+            selectedMovies={selectedMovies} 
+            removeMovie={removeMovie} 
+            clearSelection={clearSelectedMovies}
+          />
+        </div>
+        <div className="lg:col-span-2">
+          <SearchResults 
+            searchResults={sortedSearchResults} 
+            addMovie={addMovie} 
+            hasSearched={hasSearched}
+            sortOrder={sortOrder}
+            setSortOrder={setSortOrder}
+          />
         </div>
       </div>
 
-      {/* --- Recommendations Section --- */}
-      {actionData?.recommendations && actionData.recommendations.length > 0 && (
-        <div className="mt-12 w-full">
-          <h2 className="text-2xl font-semibold mb-6">{actionData.message || "Recommended Movies"}</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
-            {actionData.recommendations.map(movie => (
-              <div key={movie.imdb_id} className="bg-white rounded-lg shadow overflow-hidden flex flex-col h-full">
-                {movie.poster_url && movie.poster_url !== 'N/A' ? (
-                  <div className="h-64 overflow-hidden">
-                    <img 
-                      src={movie.poster_url} 
-                      alt={`${movie.title} poster`} 
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        target.src = 'https://via.placeholder.com/300x450?text=No+Poster';
-                      }} 
-                    />
-                  </div>
-                ) : (
-                  <div className="h-64 bg-gray-200 flex items-center justify-center">
-                    <span className="text-gray-500">No poster available</span>
-                  </div>
-                )}
-                <div className="p-4 flex-grow flex flex-col">
-                  <h3 className="font-semibold text-blue-700 text-lg">{movie.title}</h3>
-                  <p className="text-sm text-gray-600 mb-1">{movie.year}</p>
-                  {movie.genres && <p className="text-xs text-gray-500 mb-2">{movie.genres}</p>}
-                  {movie.plot && (
-                    <p className="text-xs text-gray-700 mt-2 flex-grow line-clamp-3 overflow-hidden">
-                      {movie.plot}
-                    </p>
-                  )}
-                  <a 
-                    href={`https://www.imdb.com/title/${movie.imdb_id}/`} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="mt-3 text-xs text-blue-600 hover:underline inline-block"
-                  >
-                    View on IMDb
-                  </a>
-                </div>
-              </div>
+
+
+      {/* --- Recommendations Display --- */}
+      {recommendations.length > 0 && (
+        <div className="mt-12">
+          <h2 className="text-3xl font-bold text-slate-800 mb-6 text-center">Your Recommendations</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-8">
+            {recommendations.map((movie) => (
+              <RecommendationCard key={movie.imdb_id} movie={movie} />
             ))}
           </div>
         </div>
       )}
-    </main>
+    </div>
   );
 }

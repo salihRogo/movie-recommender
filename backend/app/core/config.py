@@ -1,6 +1,8 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
-import os # Ensure os module is imported
+import os
+from typing import Optional
 
 # Define the base directory of the backend application
 # This helps in constructing absolute paths if needed
@@ -14,23 +16,24 @@ BACKEND_DIR = BACKEND_APP_DIR.parent # .../movie-recommender-2/backend/
 
 class Settings(BaseSettings):
     # --- Heroku Specific Settings ---
-    # These are used when the ON_HEROKU environment variable is set to "true"
-    ON_HEROKU: bool = os.getenv("ON_HEROKU", "False").lower() == "true"
+    ON_HEROKU: bool = False
+
     # --- General Settings ---
+    DATABASE_URL: str
+    OMDB_API_BASE_URL: Optional[str] = None
+    OMDB_API_KEY: str
 
-    # Database Configuration (MySQL)
-    # Example: mysql+pymysql://user:password@host:port/database
-    DATABASE_URL: str = os.getenv("DATABASE_URL")
+    @field_validator("OMDB_API_KEY")
+    @classmethod
+    def validate_omdb_api_key(cls, v: str):
+        if not v or not v.strip():
+            raise ValueError("OMDB_API_KEY must be set and non-empty in your environment or .env file.")
+        return v
 
-    # OMDb API Configuration (http://www.omdbapi.com/)
-    OMDB_API_BASE_URL: str = os.getenv("OMDB_API_BASE_URL")
-    OMDB_API_KEY: str = os.getenv("OMDB_API_KEY")
-
-    # Pydantic settings configuration
-    # env_file should point to backend/.env
     model_config = SettingsConfigDict(
-        env_file=str(BACKEND_DIR / ".env"),  # .env file is in the backend directory
-        extra="allow"
+        env_file=f"{BACKEND_DIR}/.env",
+        env_file_encoding='utf-8',
+        extra='ignore'
     )
 
 settings = Settings()

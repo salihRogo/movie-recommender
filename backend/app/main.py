@@ -6,6 +6,8 @@ logging.basicConfig(level=logging.INFO) # Set default logging level to INFO
 logger = logging.getLogger(__name__)
 import asyncio # Added for asyncio.gather
 
+import os
+import httpx
 from .services.unified_recommender_service import UnifiedRecommenderService
 from .schemas import RecommendationResponse, MovieSearchResponse, ProfileRecommendationRequest, ProfileRecommendationResponse
 from .core.config import settings
@@ -14,11 +16,11 @@ from fastapi.concurrency import run_in_threadpool
 
 app = FastAPI(
     title="Movie Recommender API",
-    description="API for a movie recommender system using collaborative filtering.",
+    description="API for a movie recommender system using collaborative filtering and OMDb for search.",
     version="0.1.0",
 )
 
-# Initialize Unified Recommender Service which combines the best features from both implementations
+# Initialize Unified Recommender Service for recommendations
 logger.info("Initializing Unified Recommender Service for API...")
 recommender = UnifiedRecommenderService()
 logger.info("Unified Recommender Service will use direct, enhanced, and model-based ID mappings.")
@@ -26,59 +28,95 @@ logger.info("Unified Recommender Service will use direct, enhanced, and model-ba
 @app.on_event("startup")
 async def startup_event():
     """Load the model on startup in a non-blocking background task."""
-    print("Application startup: Creating background task for model loading...")
-    # Run the synchronous `load_model` in a thread pool to avoid blocking the event loop
+    logger.info("Application startup: Creating background task for model loading.")
     asyncio.create_task(run_in_threadpool(recommender.load_model))
-    print("Application startup: Model loading task is running in the background.")
-print("Recommender Service initialized.")
 
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the Movie Recommender API!"}
 
+@app.get("/search")
+async def search_movies(movie_title: str):
+    """
+    Search for movies by title using the OMDb API and enrich results with details.
+    - **movie_title**: The search query for the movie title.
+    """
+    api_key = settings.OMDB_API_KEY
+    if not api_key:
+        raise HTTPException(status_code=500, detail="OMDb API key not configured.")
 
-@app.get("/movies/search", response_model=MovieSearchResponse)
-async def search_movies(title: str):
-    """
-    Search for movies by title.
-    - **title**: The search query for the movie title.
-    """
-    search_results = await recommender.search_movies_by_title(title)
-    return MovieSearchResponse(results=search_results)
+    search_url = f"http://www.omdbapi.com/?s={movie_title}&apikey={api_key}&type=movie"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            # Step 1: Perform the initial search
+            search_response = await client.get(search_url)
+            search_response.raise_for_status()
+            search_data = search_response.json()
+
+            if search_data.get("Response") != "True":
+                return []
+
+            search_results = search_data.get("Search", [])
+
+            # Step 2: Fetch detailed information for each search result concurrently
+            async def get_details(imdb_id: str):
+                details_url = f"http://www.omdbapi.com/?i={imdb_id}&apikey={api_key}"
+                try:
+                    details_response = await client.get(details_url)
+                    details_response.raise_for_status()
+                    details_data = details_response.json()
+                    if details_data.get("Response") == "True":
+                        return details_data
+                except httpx.RequestError as exc:
+                    logger.error(f"Error fetching details for {imdb_id}: {exc}")
+                return None
+
+            tasks = [get_details(movie["imdbID"]) for movie in search_results]
+            detailed_results = await asyncio.gather(*tasks)
+
+            # Filter out any None results from failed detail fetches
+            return [result for result in detailed_results if result]
+
+        except httpx.RequestError as exc:
+            logger.error(f"An error occurred while requesting {exc.request.url!r}: {exc}")
+            raise HTTPException(status_code=503, detail="Error communicating with OMDb API.")
+        except Exception as exc:
+            logger.error(f"An unexpected error occurred during movie search: {exc}")
+            raise HTTPException(status_code=500, detail="An internal error occurred.")
 
 
 @app.post("/recommendations/by_profile", response_model=ProfileRecommendationResponse)
 async def get_profile_recommendations(request: ProfileRecommendationRequest, n: int = 10):
     """
-    Generate movie recommendations based on a list of liked movies.
-    - **imdb_ids**: A list of IMDb IDs for the movies the user likes.
+    Get movie recommendations based on a list of liked IMDb IDs.
+    - **request**: A list of IMDb IDs for movies the user likes.
+    - **n**: The number of recommendations to return.
     """
-    recommended_imdb_ids, base_message = recommender.get_recommendations_for_profile(request.imdb_ids, n)
-    
-    movie_details_list = []
-    final_message = base_message
+    try:
+        # Use run_in_threadpool to avoid blocking the event loop
+        # This returns a tuple of (list of IMDb IDs, message)
+        recommendation_ids, message = await run_in_threadpool(
+            recommender.get_recommendations_for_profile,
+            request.imdb_ids,
+            n=n
+        )
 
-    if recommended_imdb_ids:
-        # Fetch details for all recommended IMDb IDs concurrently
-        detail_tasks = [recommender.get_movie_details_by_imdb_id(imdb_id) for imdb_id in recommended_imdb_ids]
-        movie_details_results = await asyncio.gather(*detail_tasks)
-        
-        # Filter out any errors and keep successful details
-        for details in movie_details_results:
-            if not details.get("Error"):
-                movie_details_list.append(details)
-            else:
-                logger.warning(f"Could not fetch details for IMDb ID {details.get('imdbID', 'unknown')} from profile recommendations: {details.get('Error')}")
+        # If no IDs were recommended (e.g., fallback), return an empty list
+        if not recommendation_ids:
+            logger.info("No recommendation IDs returned from service, returning empty list.")
+            return {"recommendations": [], "message": message}
 
-        if len(movie_details_list) < len(recommended_imdb_ids):
-            final_message += " Some movie details could not be fetched."
-    elif not base_message: # If base_message was empty and no IDs, means something unexpected
-        final_message = "Could not generate recommendations based on the provided profile."
+        # Fetch full movie details for the recommended IDs to satisfy the response model
+        logger.info(f"Fetching details for {len(recommendation_ids)} recommended movie IDs.")
+        recommendations_details = await recommender.get_movie_details_by_ids(recommendation_ids)
+        logger.info(f"Successfully fetched details for {len(recommendations_details)} movies.")
 
-    if not movie_details_list and recommended_imdb_ids: # Had IDs but couldn't fetch details
-        final_message += " However, details for the recommended movies could not be fetched."
-    
-    return ProfileRecommendationResponse(recommendations=movie_details_list, message=final_message)
+        return {"recommendations": recommendations_details, "message": message}
+    except Exception as e:
+        logger.error(f"Error getting profile recommendations: {e}")
+        logger.exception("An exception occurred during profile recommendation generation:")
+        raise HTTPException(status_code=500, detail="Failed to generate recommendations.")
 
 
 @app.get("/recommendations/{user_id}", response_model=RecommendationResponse)

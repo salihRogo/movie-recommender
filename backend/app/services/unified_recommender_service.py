@@ -16,6 +16,7 @@ import logging
 import joblib
 from pathlib import Path
 import time
+import asyncio
 from sqlalchemy import create_engine, text, inspect
 import httpx
 from types import SimpleNamespace
@@ -45,6 +46,48 @@ class UnifiedRecommenderService:
         'errors': 0
     }
     
+    async def _get_movie_details_by_imdb_id(self, client: httpx.AsyncClient, imdb_id: str) -> Optional[Dict[str, Any]]:
+        """Helper to fetch details for a single IMDb ID."""
+        base_url = settings.OMDB_API_BASE_URL or "http://www.omdbapi.com/"
+        params = {"i": imdb_id, "apikey": settings.OMDB_API_KEY}
+        try:
+            response = await client.get(base_url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("Response") == "True":
+                return {
+                    "imdb_id": data.get("imdbID"),
+                    "title": data.get("Title"),
+                    "year": data.get("Year"),
+                    "poster_url": data.get("Poster"),
+                    "genres": data.get("Genre"),
+                    "plot": data.get("Plot"),
+                    "actors": data.get("Actors"),
+                    "imdbRating": data.get("imdbRating"),
+                }
+            else:
+                logger.warning(f"OMDb API returned an error for IMDb ID {imdb_id}: {data.get('Error')}")
+                return None
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error fetching details for IMDb ID {imdb_id}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"An unexpected error occurred fetching details for IMDb ID {imdb_id}: {e}")
+            return None
+
+    async def get_movie_details_by_ids(self, imdb_ids: List[str]) -> List[Dict[str, Any]]:
+        """Fetch full movie details for a list of IMDb IDs concurrently."""
+        if not settings.OMDB_API_KEY:
+            logger.error("OMDB_API_KEY not configured. Cannot fetch movie details.")
+            return []
+
+        timeout = httpx.Timeout(10.0, connect=3.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            tasks = [self._get_movie_details_by_imdb_id(client, imdb_id) for imdb_id in imdb_ids]
+            results = await asyncio.gather(*tasks)
+        
+        return [result for result in results if result is not None]
+
     def __init__(self):
         """Initialize the unified recommender service."""
         self.algo = SVD()
@@ -527,8 +570,15 @@ class UnifiedRecommenderService:
         # Get inner IDs for the raw IDs
         inner_ids = [self.raw_to_inner_iid_map[raw_id] for raw_id in mapped_raw_ids if raw_id in self.raw_to_inner_iid_map]
         
-        # Get item vectors for inner IDs from model's qi matrix
-        item_vectors = np.array([self.algo.qi[inner_id] for inner_id in inner_ids])
+        # Get item vectors for inner IDs from model's qi matrix, with boundary checks
+        n_items = self.algo.qi.shape[0]
+        valid_inner_ids = [iid for iid in inner_ids if iid < n_items]
+
+        if not valid_inner_ids:
+            logger.warning("None of the mapped profile movies have valid inner IDs in the model. Using popular fallback.")
+            return self.popular_movie_ids_fallback[:n], "None of your liked movies could be used for recommendations. Showing popular movies instead."
+        
+        item_vectors = np.array([self.algo.qi[inner_id] for inner_id in valid_inner_ids])
         
         # Calculate the average item vector representing this user's taste
         average_item_vector = np.mean(item_vectors, axis=0)
@@ -541,6 +591,10 @@ class UnifiedRecommenderService:
         for inner_id, raw_id in self.inner_to_raw_iid_map.items():
             # Skip items that are already in the user's profile
             if raw_id in mapped_raw_ids:
+                continue
+                
+            # CRITICAL: Add boundary check to prevent crash from inconsistent model files
+            if inner_id >= self.algo.qi.shape[0]:
                 continue
                 
             # Calculate cosine similarity
