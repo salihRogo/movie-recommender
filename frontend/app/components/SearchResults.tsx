@@ -5,8 +5,8 @@ interface SearchResultsProps {
   searchResults: MovieSearchResult[];
   addMovie: (movie: MovieSearchResult) => void;
   hasSearched: boolean;
-  sortOrder: 'year' | 'popularity';
-  setSortOrder: (order: 'year' | 'popularity') => void;
+  sortOrder: 'popularity' | 'year';
+  setSortOrder: (order: 'popularity' | 'year') => void;
 }
 
 export default function SearchResults({ 
@@ -23,19 +23,20 @@ export default function SearchResults({
         {searchResults.length > 0 && (
           <div className="flex items-center space-x-4">
             <button
-              onClick={() => setSortOrder(sortOrder === 'year' ? 'popularity' : 'year')}
+              onClick={() => setSortOrder(sortOrder === 'popularity' ? 'year' : 'popularity')}
               className="text-sm font-semibold text-sky-600 hover:text-sky-800 transition-colors"
               title={`Currently sorting by ${sortOrder}. Click to change.`}
             >
-              Sort by {sortOrder === 'year' ? 'Popularity' : 'Year'}
+              Sort by {sortOrder === 'popularity' ? 'Year' : 'Popularity'}
             </button>
+
             <Form method="post">
               <input type="hidden" name="intent" value="clear_search" />
               <button
                 type="submit"
                 className="text-sm font-semibold text-rose-500 hover:text-rose-700 transition-colors"
               >
-                Clear results
+                Clear Results
               </button>
             </Form>
           </div>

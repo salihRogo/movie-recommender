@@ -8,40 +8,28 @@ export interface MovieSearchResult {
   imdbVotes?: string;
 }
 
-export interface RecommendedMovie {
+export interface MovieDetail {
   imdb_id: string;
   title: string;
   year: string;
-  poster_url?: string;
-  genres?: string;
-  plot?: string;
-  actors?: string;
-  imdbRating?: string;
+  poster_url?: string | null;
+  genres?: string | null;
+  plot?: string | null;
+  actors?: string | null;
+  imdbRating?: string | null;
+  imdbVotes?: string | null;
 }
 
-// Interface for the backend movie data format which may use different casing
-export interface BackendMovieData {
-  imdbID?: string;
-  imdb_id?: string;
-  Title?: string;
-  title?: string;
-  Year?: string;
-  year?: string;
-  Poster?: string;
-  poster_url?: string;
-  Genre?: string;
-  genres?: string;
-  Plot?: string;
-  plot?: string;
-  Actors?: string;
-  actors?: string;
-  imdbVotes?: string;
-  imdbRating?: string;
+export interface ProfileRecommendationResponse {
+  recommendations: MovieDetail[];
+  message: string;
 }
 
 export interface ActionData {
   searchResults?: MovieSearchResult[];
-  recommendations?: RecommendedMovie[];
+  recommendations?: MovieDetail[];
   error?: string;
   message?: string;
 }
+
+export type SortOrder = 'popularity' | 'year';

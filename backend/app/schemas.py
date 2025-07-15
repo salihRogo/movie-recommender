@@ -13,6 +13,7 @@ class MovieDetail(BaseModel):
     plot: Optional[str] = None
     actors: Optional[str] = None
     imdbRating: Optional[str] = None
+    imdbVotes: Optional[str] = None
 
     class Config:
         from_attributes = True # Allows creating from ORM models or dicts

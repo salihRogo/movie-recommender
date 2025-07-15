@@ -2,13 +2,15 @@ import { json, type ActionFunctionArgs, type MetaFunction } from "@remix-run/nod
 import { Form, useActionData, useNavigation } from "@remix-run/react";
 import { useState, useMemo } from "react";
 
-import type { MovieSearchResult, RecommendedMovie, BackendMovieData } from '~/types';
+import type { MovieSearchResult, MovieDetail, SortOrder } from '~/types';
 // eslint-disable-next-line import/no-unresolved
 import SelectedMovies from '~/components/SelectedMovies';
 // eslint-disable-next-line import/no-unresolved
 import SearchResults from '~/components/SearchResults';
 // eslint-disable-next-line import/no-unresolved
 import RecommendationCard from '~/components/RecommendationCard';
+// eslint-disable-next-line import/no-unresolved
+import { searchMovies, getRecommendations } from '~/services/api.server';
 
 // --- Remix Loader & Action --- //
 
@@ -19,108 +21,48 @@ export const meta: MetaFunction = () => {
   ];
 };
 
-async function normalizeAndFilter(data: BackendMovieData[], query: string): Promise<MovieSearchResult[]> {
-  if (!Array.isArray(data)) {
-    console.error("Expected an array from backend, but got:", data);
-    return [];
-  }
 
-  const lowerCaseQuery = query.toLowerCase();
-
-  const mappedAndTagged = data.map(movie => ({
-    imdb_id: movie.imdbID || movie.imdb_id || '',
-    title: movie.Title || movie.title || 'Unknown Title',
-    year: movie.Year || movie.year || 'Unknown Year',
-    actors: movie.Actors || movie.actors || 'N/A',
-    isExactMatch: (movie.Title || movie.title || '').toLowerCase() === lowerCaseQuery,
-    imdbVotes: movie.imdbVotes || '0',
-  })).filter(movie => movie.imdb_id);
-
-  // Return the mapped data without sorting; sorting will be handled on the client.
-  return mappedAndTagged;
-}
-
-async function normalizeRecommendations(data: BackendMovieData[]): Promise<RecommendedMovie[]> {
-  if (!Array.isArray(data)) {
-    console.error("Expected an array for recommendations, but got:", data);
-    return [];
-  }
-  return data.map(movie => ({
-    imdb_id: movie.imdb_id || movie.imdbID || '',
-    title: movie.title || movie.Title || 'Unknown Title',
-    year: movie.year || movie.Year || 'Unknown Year',
-    poster_url: movie.poster_url || movie.Poster,
-    genres: movie.genres || movie.Genre,
-    plot: movie.plot || movie.Plot,
-    actors: movie.Actors || movie.actors,
-    imdbRating: movie.imdbRating,
-  })).filter(movie => movie.imdb_id);
-}
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
-  const intent = formData.get("intent");
-  const API_URL = process.env.API_URL || 'http://127.0.0.1:8000';
+  const intent = formData.get('intent');
 
-  if (intent === "search") {
-    const query = formData.get("search_query") as string;
-    if (!query) {
-      return json({ searchResults: [], error: "Search query cannot be empty." }, { status: 400 });
-    }
-    try {
-      const response = await fetch(`${API_URL}/search?movie_title=${encodeURIComponent(query)}`);
-      if (!response.ok) {
-        const errorBody = await response.text();
-        console.error(`API Error ${response.status}:`, errorBody);
-        return json({ searchResults: [], error: `Failed to fetch from API: ${response.statusText}` }, { status: response.status });
+  switch (intent) {
+    case 'search': {
+      const query = formData.get('search_query') as string;
+      if (!query) {
+        return json({ searchResults: [], error: 'Search query cannot be empty.' }, { status: 400 });
       }
-      const data: BackendMovieData[] = await response.json();
-      const searchResults = await normalizeAndFilter(data, query);
+      const searchResults = await searchMovies(query);
       return json({ searchResults });
-    } catch (error) {
-      console.error("Network or parsing error:", error);
-      return json({ searchResults: [], error: "An error occurred while searching." }, { status: 500 });
-    }
-  }
-
-  if (intent === "clear_search") {
-    return json({ searchResults: [], cleared: true });
-  }
-
-  if (intent === "recommend") {
-    const selectedMoviesJSON = formData.get("selected_movies") as string;
-    if (!selectedMoviesJSON) {
-        return json({ recommendations: [], message: "Please select at least one movie." }, { status: 400 });
     }
 
-    try {
-      const likedMovies: string[] = JSON.parse(selectedMoviesJSON);
-      if (!Array.isArray(likedMovies) || likedMovies.length === 0) {
-        return json({ recommendations: [], message: "Please select at least one movie." }, { status: 400 });
+    case 'clear_search': {
+      return json({ searchResults: [], cleared: true });
+    }
+
+    case 'recommend': {
+      const selectedMoviesJSON = formData.get('selected_movies') as string;
+      if (!selectedMoviesJSON) {
+        return json({ recommendations: [], message: 'Please select at least one movie.' }, { status: 400 });
       }
-
-      const response = await fetch(`${API_URL}/recommendations/by_profile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imdb_ids: likedMovies }),
-      });
-      if (!response.ok) {
-        const errorBody = await response.text();
-        console.error(`API Error ${response.status}:`, errorBody);
-        return json({ recommendations: [], error: `Failed to get recommendations: ${response.statusText}` }, { status: response.status });
+      try {
+        const likedMovieIds: string[] = JSON.parse(selectedMoviesJSON);
+        if (!Array.isArray(likedMovieIds) || likedMovieIds.length === 0) {
+          return json({ recommendations: [], message: 'Invalid selection.' }, { status: 400 });
+        }
+        const result = await getRecommendations(likedMovieIds);
+        return json(result);
+      } catch (error) {
+        console.error('Error parsing selected movies JSON:', error);
+        return json({ recommendations: [], message: 'An error occurred.' }, { status: 500 });
       }
-      const responseData = await response.json();
-      const recommendations = await normalizeRecommendations(responseData.recommendations);
-      return json({ 
-        recommendations
-      });
-    } catch (error) {
-      console.error("Network or parsing error during recommendation:", error);
-      return json({ recommendations: [], error: "An error occurred while getting recommendations." }, { status: 500 });
+    }
+
+    default: {
+      return json({ error: 'Invalid intent' }, { status: 400 });
     }
   }
-
-  return json({ error: "Invalid intent" }, { status: 400 });
 };
 
 // --- React Component --- //
@@ -131,7 +73,7 @@ export default function Index() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMovies, setSelectedMovies] = useState<MovieSearchResult[]>([]);
-  const [sortOrder, setSortOrder] = useState<'year' | 'popularity'>('popularity');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('popularity');
 
   const isSearching = navigation.state === 'submitting' && navigation.formData?.get('intent') === 'search';
 
@@ -142,12 +84,7 @@ export default function Index() {
     [actionData]
   );
   
-  const recommendations = useMemo(() => 
-    (actionData && 'recommendations' in actionData && Array.isArray(actionData.recommendations)) 
-      ? actionData.recommendations 
-      : [],
-    [actionData]
-  );
+  const recommendations: MovieDetail[] = (actionData && 'recommendations' in actionData && actionData.recommendations as MovieDetail[]) || [];
 
   const hasSearched = useMemo(() => {
     if (!actionData) return false;
@@ -156,29 +93,42 @@ export default function Index() {
     return 'searchResults' in actionData || 'error' in actionData;
   }, [actionData]);
 
+  const sortedSearchResults: MovieSearchResult[] = useMemo(() => {
+    if (!searchResults) return [];
 
+    const lowerCaseQuery = searchQuery.toLowerCase();
 
-  const sortedSearchResults = useMemo(() => {
-    return [...searchResults].sort((a, b) => {
+    const processedResults: MovieSearchResult[] = searchResults.map(movie => ({
+      ...movie,
+      actors: movie.actors || 'N/A',
+      isExactMatch: movie.title.toLowerCase() === lowerCaseQuery,
+      // The backend needs to provide imdbVotes for this to work
+      imdbVotes: movie.imdbVotes || '0',
+    }));
+
+    return processedResults.sort((a, b) => {
       // Prioritize exact matches
-      if (a.isExactMatch !== b.isExactMatch) {
-        return a.isExactMatch ? -1 : 1;
+      if (a.isExactMatch && !b.isExactMatch) return -1;
+      if (!a.isExactMatch && b.isExactMatch) return 1;
+
+      // Then sort by the chosen order
+      if (sortOrder === 'year') {
+        return b.year.localeCompare(a.year);
       }
 
-      // Fallback to user-selected sort order
-      if (sortOrder === 'year') {
-        return (b.year || '0').localeCompare(a.year || '0');
-      } 
-      
-      // Popularity sort
+      // Default to popularity sort
       const votesA = parseInt((a.imdbVotes || '0').replace(/,/g, ''), 10);
       const votesB = parseInt((b.imdbVotes || '0').replace(/,/g, ''), 10);
       return votesB - votesA;
     });
-  }, [searchResults, sortOrder]);
+  }, [searchResults, sortOrder, searchQuery]);
+
+  
 
   const addMovie = (movie: MovieSearchResult) => {
+    // Ensure we don't add duplicates
     if (!selectedMovies.some(m => m.imdb_id === movie.imdb_id)) {
+      // The `movie` object is already a `MovieSearchResult`, so it can be added directly.
       setSelectedMovies(prev => [...prev, movie]);
     }
   };
@@ -258,7 +208,7 @@ export default function Index() {
         <div className="mt-12">
           <h2 className="text-3xl font-bold text-slate-800 mb-6 text-center">Your Recommendations</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-8">
-            {recommendations.map((movie) => (
+            {recommendations.map((movie: MovieDetail) => (
               <RecommendationCard key={movie.imdb_id} movie={movie} />
             ))}
           </div>

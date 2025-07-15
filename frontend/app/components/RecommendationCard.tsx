@@ -1,7 +1,7 @@
-import type { RecommendedMovie } from '~/types';
+import type { MovieDetail } from '~/types'; 
 
 interface RecommendationCardProps {
-  movie: RecommendedMovie;
+  movie: MovieDetail;
 }
 
 const formatGenres = (genres: string | undefined) => {
