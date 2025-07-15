@@ -10,6 +10,7 @@ from typing import List, Dict, Tuple, Optional
 import joblib
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
+from functools import lru_cache
 from ..core.config import MODELS_DIR
 from .omdb_service import OmdbService
 from .movie_data_service import MovieDataService
@@ -112,3 +113,9 @@ class RecommenderService:
             return self.popular_movie_ids_fallback[:n], "No recommendations found. Showing popular movies."
 
         return recommended_imdb_ids[:n], f"Generated {len(recommended_imdb_ids)} recommendations."
+
+@lru_cache()
+def get_recommender_service():
+    """Cached dependency injector for RecommenderService to ensure it's a singleton."""
+    service = RecommenderService()
+    return service

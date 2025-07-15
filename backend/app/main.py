@@ -1,5 +1,5 @@
 import logging # Added for basicConfig
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from typing import List, Dict
 
 logging.basicConfig(level=logging.INFO) # Set default logging level to INFO
@@ -8,8 +8,9 @@ import asyncio # Added for asyncio.gather
 from contextlib import asynccontextmanager
 import os
 import httpx
-from .services.recommender_service import RecommenderService
-from .schemas import RecommendationResponse, MovieSearchResponse, ProfileRecommendationRequest, ProfileRecommendationResponse
+from .services.recommender_service import RecommenderService, get_recommender_service
+from .services.omdb_service import OmdbService, get_omdb_service
+from .schemas import MovieDetail, ProfileRecommendationRequest, ProfileRecommendationResponse
 from .core.config import settings
 import asyncio
 from fastapi.concurrency import run_in_threadpool
@@ -18,6 +19,9 @@ from fastapi.concurrency import run_in_threadpool
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle application startup and shutdown events."""
+    # Get the singleton recommender service instance
+    recommender = get_recommender_service()
+    # Load the model in a background thread
     asyncio.create_task(run_in_threadpool(recommender.load_model))
     yield
     logger.info("Application shutdown.")
@@ -29,22 +33,22 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Initialize Recommender Service, which orchestrates the other services
-logger.info("Initializing Recommender Service for API...")
-recommender = RecommenderService()
 
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the Movie Recommender API!"}
 
-@app.get("/search", response_model=List[Dict])
-async def search_movies(movie_title: str):
+@app.get("/search", response_model=List[MovieDetail])
+async def search_movies(
+    movie_title: str,
+    omdb_service: OmdbService = Depends(get_omdb_service),
+):
     """
     Search for movies by title using the OMDb API.
     - **movie_title**: The search query for the movie title.
     """
     try:
-        search_results = await recommender.omdb_service.search_movies_by_title(movie_title)
+        search_results = await omdb_service.search_movies_by_title(movie_title)
         return search_results
     except Exception as e:
         logger.error(f"An unexpected error occurred during movie search: {e}")
@@ -52,7 +56,12 @@ async def search_movies(movie_title: str):
 
 
 @app.post("/recommendations/by_profile", response_model=ProfileRecommendationResponse)
-async def get_profile_recommendations(request: ProfileRecommendationRequest, n: int = 10):
+async def get_profile_recommendations(
+    request: ProfileRecommendationRequest,
+    n: int = 10,
+    recommender: RecommenderService = Depends(get_recommender_service),
+    omdb_service: OmdbService = Depends(get_omdb_service),
+):
     """
     Get movie recommendations based on a list of liked IMDb IDs.
     - **request**: A list of IMDb IDs for movies the user likes.
@@ -69,7 +78,7 @@ async def get_profile_recommendations(request: ProfileRecommendationRequest, n: 
             logger.info("No recommendation IDs returned from service, returning empty list.")
             return {"recommendations": [], "message": message}
 
-        recommendations_details = await recommender.omdb_service.get_movie_details_by_ids(recommendation_ids)
+        recommendations_details = await omdb_service.get_movie_details_by_ids(recommendation_ids)
 
         return {"recommendations": recommendations_details, "message": message}
     except Exception as e:

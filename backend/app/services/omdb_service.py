@@ -98,3 +98,7 @@ class OmdbService:
         except Exception as e:
             logger.error(f"An unexpected error occurred during movie search: {e}")
             return []
+
+def get_omdb_service():
+    """Dependency injector for OmdbService."""
+    return OmdbService()

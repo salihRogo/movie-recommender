@@ -98,3 +98,7 @@ class MovieDataService:
             except Exception as e:
                 logger.error(f"Error fetching imdb id from raw id {raw_id}: {e}")
         return imdb_ids
+
+def get_movie_data_service():
+    """Dependency injector for MovieDataService."""
+    return MovieDataService()

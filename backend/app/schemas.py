@@ -1,27 +1,30 @@
-from pydantic import BaseModel
-from typing import List, Dict, Any
+from pydantic import BaseModel, Field
+from typing import List, Dict, Any, Optional
 
-from pydantic import BaseModel, Field # Import Field
-from typing import List, Dict, Any
 
-class MovieSearchResult(BaseModel):
-    imdb_id: str = Field(..., alias='imdbID')
-    title: str = Field(..., alias='Title')
-    year: str = Field(..., alias='Year')
-    # We can also add other fields from OMDb if needed, e.g., poster
-    # poster: Optional[str] = Field(None, alias='Poster')
 
-class MovieSearchResponse(BaseModel):
-    results: List[MovieSearchResult]
+class MovieDetail(BaseModel):
+    """Schema for detailed movie information from OMDb."""
+    imdb_id: str
+    title: str
+    year: str
+    poster_url: Optional[str] = None
+    genres: Optional[str] = None
+    plot: Optional[str] = None
+    actors: Optional[str] = None
+    imdbRating: Optional[str] = None
+
+    class Config:
+        from_attributes = True # Allows creating from ORM models or dicts
 
 class RecommendationResponse(BaseModel):
     user_id: int
-    recommendations: List[Dict[str, Any]]
+    recommendations: List[MovieDetail]
     message: str
 
 class ProfileRecommendationRequest(BaseModel):
     imdb_ids: List[str]
 
 class ProfileRecommendationResponse(BaseModel):
-    recommendations: List[Dict[str, Any]]
+    recommendations: List[MovieDetail]
     message: str = ""
