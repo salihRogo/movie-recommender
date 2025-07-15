@@ -8,7 +8,7 @@ import asyncio # Added for asyncio.gather
 from contextlib import asynccontextmanager
 import os
 import httpx
-from .services.unified_recommender_service import UnifiedRecommenderService
+from .services.recommender_service import RecommenderService
 from .schemas import RecommendationResponse, MovieSearchResponse, ProfileRecommendationRequest, ProfileRecommendationResponse
 from .core.config import settings
 import asyncio
@@ -29,60 +29,26 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Initialize Unified Recommender Service for recommendations
-logger.info("Initializing Unified Recommender Service for API...")
-recommender = UnifiedRecommenderService()
+# Initialize Recommender Service, which orchestrates the other services
+logger.info("Initializing Recommender Service for API...")
+recommender = RecommenderService()
 
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the Movie Recommender API!"}
 
-@app.get("/search")
+@app.get("/search", response_model=List[Dict])
 async def search_movies(movie_title: str):
     """
-    Search for movies by title using the OMDb API and enrich results with details.
+    Search for movies by title using the OMDb API.
     - **movie_title**: The search query for the movie title.
     """
-    api_key = settings.OMDB_API_KEY
-    if not api_key:
-        raise HTTPException(status_code=500, detail="OMDb API key not configured.")
-
-    search_url = f"http://www.omdbapi.com/?s={movie_title}&apikey={api_key}&type=movie"
-
-    async with httpx.AsyncClient() as client:
-        try:
-            search_response = await client.get(search_url)
-            search_response.raise_for_status()
-            search_data = search_response.json()
-
-            if search_data.get("Response") != "True":
-                return []
-
-            search_results = search_data.get("Search", [])
-
-            async def get_details(imdb_id: str):
-                details_url = f"http://www.omdbapi.com/?i={imdb_id}&apikey={api_key}"
-                try:
-                    details_response = await client.get(details_url)
-                    details_response.raise_for_status()
-                    details_data = details_response.json()
-                    if details_data.get("Response") == "True":
-                        return details_data
-                except httpx.RequestError as exc:
-                    logger.error(f"Error fetching details for {imdb_id}: {exc}")
-                return None
-
-            tasks = [get_details(movie["imdbID"]) for movie in search_results]
-            detailed_results = await asyncio.gather(*tasks)
-
-            return [result for result in detailed_results if result]
-
-        except httpx.RequestError as exc:
-            logger.error(f"An error occurred while requesting {exc.request.url!r}: {exc}")
-            raise HTTPException(status_code=503, detail="Error communicating with OMDb API.")
-        except Exception as exc:
-            logger.error(f"An unexpected error occurred during movie search: {exc}")
-            raise HTTPException(status_code=500, detail="An internal error occurred.")
+    try:
+        search_results = await recommender.omdb_service.search_movies_by_title(movie_title)
+        return search_results
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during movie search: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred during movie search.")
 
 
 @app.post("/recommendations/by_profile", response_model=ProfileRecommendationResponse)
@@ -103,7 +69,7 @@ async def get_profile_recommendations(request: ProfileRecommendationRequest, n: 
             logger.info("No recommendation IDs returned from service, returning empty list.")
             return {"recommendations": [], "message": message}
 
-        recommendations_details = await recommender.get_movie_details_by_ids(recommendation_ids)
+        recommendations_details = await recommender.omdb_service.get_movie_details_by_ids(recommendation_ids)
 
         return {"recommendations": recommendations_details, "message": message}
     except Exception as e:

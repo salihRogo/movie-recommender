@@ -14,6 +14,10 @@ BACKEND_APP_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT_DIR = BACKEND_APP_DIR.parent.parent # Assumes backend/app/core structure
 BACKEND_DIR = BACKEND_APP_DIR.parent # .../movie-recommender-2/backend/
 
+# --- Model Path --- 
+MODELS_DIR = BACKEND_DIR / "models"
+MODEL_PATH = MODELS_DIR / "svd_model.joblib"
+
 class Settings(BaseSettings):
     # --- Heroku Specific Settings ---
     ON_HEROKU: bool = False
@@ -37,8 +41,3 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
-
-# To verify paths:
-# print(f"Project Root Dir: {PROJECT_ROOT_DIR}")
-# print(f"Backend App Dir: {BACKEND_APP_DIR}")
-# print(f"Backend .env path: {BACKEND_APP_DIR.parent / '.env'}")
