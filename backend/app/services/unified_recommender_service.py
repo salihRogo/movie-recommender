@@ -421,106 +421,7 @@ class UnifiedRecommenderService:
         except Exception as e:
             logger.error(f"Error fetching imdb ids from raw ids: {e}")
             return []
-            
-    def get_recommendations(self, user_id: int, n: int = 10) -> Tuple[List[str], str, str]:
-        """Get personalized movie recommendations for a user or fall back to popular movies if needed.
-        
-        Args:
-            user_id: The user ID to generate recommendations for
-            n: Number of recommendations to return
-            
-        Returns:
-            A tuple of (list of IMDb IDs, recommendation type, message)
-        """
-        start_time = time.time()
-        recommendation_type = "personalized"
-        message = ""
-        
-        if not self.model_loaded:
-            logger.warning(f"Model not loaded, returning popular movie fallback for user {user_id}")
-            return (self.popular_movie_ids_fallback[:n], "error_model_not_loaded", 
-                    "Recommender model is still loading. Popular movies returned instead.")
-        
-        # Try to get raw user ID from database by user_id
-        raw_user_id = str(user_id)
-        
-        # Check if user exists in our model
-        if raw_user_id not in self.raw_to_inner_uid_map:
-            logger.warning(f"User {user_id} not found in model. Using popular movie fallback.")
-            return (self.popular_movie_ids_fallback[:n], "popular_fallback_new_user", 
-                    "You're a new user! Try rating some movies to get personalized recommendations.")
-        
-        # Get inner user ID
-        inner_user_id = self.raw_to_inner_uid_map[raw_user_id]
-        
-        # Get user's already rated items to exclude from recommendations
-        user_rated_inner_ids = set()
-        
-        try:
-            if self.__class__._db_engine:
-                with self.__class__._db_engine.connect() as connection:
-                    # Get all movies this user has already rated
-                    query = text("SELECT movieId FROM ratings WHERE userId = :user_id")
-                    rated_results = connection.execute(query, {"user_id": user_id}).fetchall()
-                    
-                    # Convert rated MovieLens IDs to inner IDs (only if they exist in our model)
-                    for result in rated_results:
-                        ml_id = str(result[0])
-                        if ml_id in self.raw_to_inner_iid_map:
-                            inner_id = self.raw_to_inner_iid_map[ml_id]
-                            user_rated_inner_ids.add(inner_id)
-                            
-                    logger.info(f"User {user_id} has rated {len(user_rated_inner_ids)} movies that exist in our model")
-        except Exception as e:
-            logger.error(f"Error getting rated items for user {user_id}: {e}")
-            # Continue with empty set of rated items
-            
-        # Generate raw predictions for all items
-        raw_predictions = []
-        
-        # For each item in the model, predict rating if user hasn't rated it yet
-        for inner_item_id in self.inner_to_raw_iid_map.keys():
-            if inner_item_id not in user_rated_inner_ids:
-                # Predict rating using SVD model
-                try:
-                    # The Surprise predict() checks for known user/item, so we need to verify they exist first
-                    est = self.algo.estimate(inner_user_id, inner_item_id)
-                    raw_id = self.inner_to_raw_iid_map[inner_item_id]
-                    raw_predictions.append((raw_id, est))
-                except Exception as e:
-                    # Skip items that cause prediction errors
-                    continue
-                        
-        # Sort items by predicted rating
-        raw_predictions.sort(key=lambda x: x[1], reverse=True)
-        
-        # Take top N raw IDs and convert to IMDb IDs
-        top_raw_ids = [p[0] for p in raw_predictions[:n*2]]  # Get more than needed in case some mappings fail
-        
-        if not top_raw_ids:
-            logger.warning(f"No recommendations generated for user {user_id}. Using popular fallback.")
-            return (self.popular_movie_ids_fallback[:n], "popular_fallback_no_recommendations", 
-                    "Could not generate personalized recommendations. Showing popular movies instead.")
-        
-        recommended_imdb_ids = self._get_imdb_ids_from_raw_ids(top_raw_ids)
-        
-        # If no IMDb IDs found, use popular fallback
-        if not recommended_imdb_ids:
-            logger.warning(f"Failed to convert movie IDs to IMDb IDs for user {user_id}. Using popular fallback.")
-            return (self.popular_movie_ids_fallback[:n], "popular_fallback_id_mapping_failed",
-                   "Could not map movie IDs to IMDb IDs. Showing popular movies instead.")
-        
-        # Limit to requested number
-        recommended_imdb_ids = recommended_imdb_ids[:n]  
-        
-        logger.info(f"Successfully generated {len(recommended_imdb_ids)} personalized recommendations for user {user_id}")
-        message = f"Generated {len(recommended_imdb_ids)} personalized recommendations based on your rating history."
-        
-        # Calculate total time
-        total_time = time.time() - start_time
-        logger.debug(f"get_recommendations for user {user_id} took {total_time:.3f}s")
-        
-        return (recommended_imdb_ids, recommendation_type, message)
+
         
     def get_recommendations_for_profile(self, imdb_ids: List[str], n: int = 10) -> Tuple[List[str], str]:
         """Get recommendations based on a list of IMDb IDs representing movies a user likes.
@@ -629,7 +530,7 @@ class UnifiedRecommenderService:
     async def search_movies_by_title(self, title: str) -> List[Dict[str, Any]]:
         """Search for movies by title using the OMDb API.
 
-        Args:
+        Args: 
             title: The movie title to search for.
 
         Returns:
@@ -641,8 +542,6 @@ class UnifiedRecommenderService:
             logger.error("OMDB_API_KEY not configured. Cannot search for movies.")
             return []
 
-        # OMDb API endpoint for searching by title (the 's' parameter)
-        # Using http:// because the default is not https
         base_url = settings.OMDB_API_BASE_URL or "http://www.omdbapi.com/"
         params = {
             "s": title,
@@ -672,62 +571,3 @@ class UnifiedRecommenderService:
         except Exception as e:
             logger.error(f"An unexpected error occurred during movie search: {e}")
             return []
-        
-    async def get_movie_details_by_imdb_id(self, imdb_id: str) -> Dict[str, Any]:
-        """Get detailed information about a movie using its IMDb ID.
-        
-        Args:
-            imdb_id: The IMDb ID of the movie
-            
-        Returns:
-            Dictionary with movie details
-        """
-        logger.debug(f"Fetching details for movie with IMDb ID: {imdb_id}")
-        
-        # Check if IMDb ID is properly formatted
-        if not imdb_id:
-            logger.warning("Empty IMDb ID provided")
-            return {"Error": "Invalid IMDb ID"}
-        
-        # Ensure IMDb ID has tt prefix
-        if not imdb_id.startswith('tt'):
-            imdb_id = f"tt{imdb_id}"
-        
-        # Use OMDb API to get movie details by IMDb ID
-        if not settings.OMDB_API_KEY or not settings.OMDB_API_BASE_URL:
-            logger.error("OMDb API key or base URL not configured for get_movie_details_by_imdb_id.")
-            return {"Error": "OMDb API not configured", "imdbID": imdb_id}
-
-        try:
-            # Construct the OMDb API URL for fetching by IMDb ID
-            omdb_url = f"{settings.OMDB_API_BASE_URL}?i={imdb_id}&apikey={settings.OMDB_API_KEY}"
-            
-            timeout = httpx.Timeout(10.0, connect=5.0) # Standard timeout
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                logger.debug(f"Fetching details from OMDb for IMDb ID: {imdb_id} using URL: {omdb_url}")
-                omdb_response = await client.get(omdb_url)
-                omdb_response.raise_for_status()  # Raise an exception for HTTP error codes (4xx or 5xx)
-                response_data = omdb_response.json()
-
-            # Check if OMDb API returned a successful response
-            if response_data.get("Response") == "True":
-                logger.info(f"Successfully fetched details for movie {imdb_id} from OMDb: {response_data.get('Title')}")
-                # The response_data from OMDb (e.g., Title, Year, Poster, Plot, imdbID)
-                # is directly usable by the frontend after its mapping logic.
-                return response_data
-            else:
-                error_message = response_data.get("Error", "Movie not found or OMDb API error")
-                logger.warning(f"OMDb API returned an error for {imdb_id}: {error_message}")
-                return {"Error": f"OMDb API error: {error_message}", "imdbID": imdb_id}
-
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error fetching details for {imdb_id} from OMDb API: {e.response.status_code} - {e.response.text}")
-            return {"Error": f"OMDb API HTTP error {e.response.status_code}", "imdbID": imdb_id}
-        except httpx.RequestError as e:
-            # This catches network errors, DNS failures, timeouts not covered by HTTPStatusError, etc.
-            logger.error(f"Request error fetching details for {imdb_id} from OMDb API: {e}")
-            return {"Error": f"OMDb API request error", "imdbID": imdb_id}
-        except Exception as e:
-            # Catch any other unexpected errors, including JSONDecodeError if response is not valid JSON
-            logger.error(f"Unexpected error fetching details for {imdb_id} from OMDb API: {e}", exc_info=True)
-            return {"Error": f"Unexpected error processing OMDb API response for {imdb_id}", "imdbID": imdb_id}
