@@ -152,3 +152,79 @@ def test_get_recommendations_no_movies_mapped_fallback(mocker):
     # Assert
     assert recommendations == ['popular1', 'popular2']
     assert "none of your liked movies were found" in message.lower()
+
+
+def test_load_model_critical_error(mocker):
+    """Tests that a critical error during model loading is handled."""
+    # Arrange
+    mocker.patch("app.services.recommender_service.OmdbService")
+    mocker.patch("app.services.recommender_service.MovieDataService")
+    service = RecommenderService()
+
+    mocker.patch("pathlib.Path.exists", return_value=True)
+    mocker.patch("joblib.load", side_effect=Exception("Critical load error"))
+    mock_error_logger = mocker.patch("app.services.recommender_service.logger.error")
+
+    # Act
+    service.load_model()
+
+    # Assert
+    assert service.model_loaded is False
+    mock_error_logger.assert_called_once()
+
+
+def test_get_recommendations_no_valid_inner_ids_fallback(mocker):
+    """Tests fallback when inner IDs are out of bounds."""
+    # Arrange
+    mock_movie_data_service = mocker.patch("app.services.recommender_service.MovieDataService").return_value
+    mocker.patch("app.services.recommender_service.OmdbService")
+    service = RecommenderService()
+
+    service.model_loaded = True
+    service.qi = np.array([[1, 2]]) # Only one item in model
+    service.raw_to_inner_iid_map = {'movie1': 100} # Invalid inner ID
+    service.popular_movie_ids_fallback = ['popular1']
+    mock_movie_data_service.get_raw_movie_id_from_imdb_id.return_value = 'movie1'
+
+    # Act
+    recommendations, message = service.get_recommendations_for_profile(imdb_ids=['imdb1'], n=1)
+
+    # Assert
+    assert recommendations == ['popular1']
+    assert "could not generate recommendations" in message.lower()
+
+
+def test_get_recommendations_no_imdb_ids_found_fallback(mocker):
+    """Tests fallback when no IMDb IDs are found for recommended raw IDs."""
+    # Arrange
+    mock_movie_data_service = mocker.patch("app.services.recommender_service.MovieDataService").return_value
+    mocker.patch("app.services.recommender_service.OmdbService")
+    service = RecommenderService()
+
+    service.model_loaded = True
+    service.qi = np.array([[0.1, 0.2], [0.3, 0.4]])
+    service.raw_to_inner_iid_map = {'movie1': 0, 'rec_movie': 1}
+    service.inner_to_raw_iid_map = {0: 'movie1', 1: 'rec_movie'}
+    service.popular_movie_ids_fallback = ['popular1']
+    mock_movie_data_service.get_raw_movie_id_from_imdb_id.return_value = 'movie1'
+    mock_movie_data_service.get_imdb_ids_from_raw_ids.return_value = [] # No IDs found
+
+    # Act
+    recommendations, message = service.get_recommendations_for_profile(imdb_ids=['imdb1'], n=1)
+
+    # Assert
+    assert recommendations == ['popular1']
+    assert "no recommendations found" in message.lower()
+
+
+def test_get_recommender_service(mocker):
+    """Tests the dependency injector for RecommenderService."""
+    from app.services.recommender_service import get_recommender_service
+    # Mock dependencies for initialization
+    mocker.patch("app.services.recommender_service.OmdbService")
+    mocker.patch("app.services.recommender_service.MovieDataService")
+
+    service = get_recommender_service()
+    assert isinstance(service, RecommenderService)
+    # Clear cache for other tests
+    get_recommender_service.cache_clear()

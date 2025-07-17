@@ -19,8 +19,10 @@ from fastapi.concurrency import run_in_threadpool
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle application startup and shutdown events."""
-    # Get the singleton recommender service instance
-    recommender = get_recommender_service()
+    # Access the dependency through the app's dependency overrides
+    recommender_provider = app.dependency_overrides.get(get_recommender_service, get_recommender_service)
+    recommender = recommender_provider()
+    
     # Load the model in a background thread
     asyncio.create_task(run_in_threadpool(recommender.load_model))
     yield

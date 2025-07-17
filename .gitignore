@@ -34,3 +34,8 @@ Thumbs.db
 
 # Model files / Large assets
 backend/models/svd_model_components.joblib
+
+# Test artifacts
+.coverage
+test.db
+

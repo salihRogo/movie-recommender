@@ -33,6 +33,7 @@ class OmdbService:
                     "plot": data.get("Plot"),
                     "actors": data.get("Actors"),
                     "imdbRating": data.get("imdbRating"),
+                    "imdbVotes": data.get("imdbVotes"),
                 }
             else:
                 logger.warning(f"OMDb API returned an error for IMDb ID {imdb_id}: {data.get('Error')}")
