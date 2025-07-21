@@ -35,11 +35,6 @@ app = FastAPI(
     version="0.1.0",
 )
 
-
-@app.get("/")
-async def read_root():
-    return {"message": "Welcome to the Movie Recommender API!"}
-
 @app.get("/search", response_model=List[MovieDetail])
 async def search_movies(
     movie_title: str,
